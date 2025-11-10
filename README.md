@@ -135,4 +135,142 @@ Stop
 Test  
 `astro dev run tasks test dag_id`
 
-### Airflow hooks  
+### Airflow hooks   
+In Apache Airflow, a hook is an interface that allows Airflow to connect and interact with external systems or services, such as databases, APIs, cloud providers (AWS, GCP, Azure), file systems, or any other data source.
+A hook is an abstraction layer over an external service.  
+
+It encapsulates connection logic, authentication, and methods for performing operations, so developers don’t have to reimplement those details every time.    
+
+BaseHook is the abstract base class from which all other hooks in Airflow inherit. 
+#### The main responsibilities of BaseHook:
+**Connection Management**  
+It provides the method `get_connection(conn_id)` that retrieves a connection from Airflow’s metadata database:  
+```python
+conn = BaseHook.get_connection('my_postgres')
+print(conn.host, conn.login, conn.password)
+```
+Example of custom Hook to connect to api:
+```python
+from airflow.hooks.base import BaseHook
+import requests
+
+class MyApiHook(BaseHook):
+    def __init__(self, conn_id):
+        super().__init__()
+        self.conn_id = conn_id
+        self.conn = self.get_connection(conn_id)
+        self.base_url = self.conn.host
+
+    def get_data(self, endpoint):
+        url = f"{self.base_url}/{endpoint}"
+        response = requests.get(url, auth=(self.conn.login, self.conn.password))
+        response.raise_for_status()
+        return response.json()
+```
+### Migrating to Airflow task flow 
+
+### XCOM
+
+### Airflow providers
+
+### Notifier  
+
+
+### Creating DAGs  
+```python
+from airflow import DAG
+from airflow.operators.python import PythonOperator
+
+dag = DAG(...)  
+
+ta = PythonOperator(task_id='ta',dag=dag)
+tb = PythonOperator(task_id='tb',dag=dag)
+```  
+#### Context manager  
+```python 
+from airflow import DAG
+from airflow.operators.python import PythonOperator
+
+with DAG(...):
+    ta = PythonOperator(task_id='ta')
+    tb = PythonOperator(task_id='tb')
+```
+#### dag decorator  
+DAG id will be the name of the function.
+```python 
+from airflow.decorators import dag
+from airflow.operators.python import PythonOperator
+
+@dag
+def my_dag():
+    ta = PythonOperator(task_id='ta')
+    tb = PythonOperator(task_id='tb')
+
+my_dag()
+```
+### Backfill and catchup  
+In Apache Airflow, `catchup` is a setting that controls whether Airflow should run all past DAG runs that were missed (based on the DAG’s `start_date` and `schedule`) when you first start or unpause a DAG.    
+
+In Apache Airflow, backfill means running a DAG for past (historical) dates or schedules that were missed — usually to “fill in” data gaps or reprocess older time periods.  
+```bash
+airflow dags backfill -s 2025-11-01 -e 2025-11-05 example_dag
+```
+
+### Airflow variable `data_interval_end`
+`data_interval_end` can be used to replace `NOW()` in SQL queries, `data_interval_end` is the date of the current DAG Run. Airflow variable `data_interval_end` makes your DAG idempotent.  
+
+
+### Timezones in Airflow  
+By default, everything in Airflow is displayed in UTC.   
+
+### Datasets   
+Dataset in Airflow is a pointer to some resources.  
+
+Producer of dataset:
+```python
+from airflow import dataset
+
+file = Dataset("/tmp/data.txt")
+
+@dag(...)
+def my_dag():
+  def task_a(outlets=[file]):
+    with open(file.uri,'a') as f:
+        f.write("producer update")
+```
+Consumer of dataset:
+```python
+from airflow import dataset
+
+file = Dataset("/tmp/data.txt")
+
+@dag(...)
+def my_dag(schedule=[file]):
+  def task_b():
+      print("consumer")
+    
+```
+
+### Conditional Dataset Scheduling    
+Wait for both dataset a and b.
+```python
+from airflow import dataset
+
+a = Dataset("data_a")
+b = Dataset("data_b")
+
+@dag(...)
+def my_dag(schedule=[a,b]):
+    ...
+```
+Wait for dataset a aor b.
+```python
+from airflow import dataset
+
+a = Dataset("data_a")
+b = Dataset("data_b")
+
+@dag(...)
+def my_dag(schedule=(a | b)):
+    ...
+```

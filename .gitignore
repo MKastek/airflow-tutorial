@@ -6,6 +6,8 @@ __pycache__/
 # C extensions
 *.so
 
+spark/.DS_Store
+
 .idea/
 
 # Ignore MinIO data and system files
