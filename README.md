@@ -274,3 +274,8 @@ b = Dataset("data_b")
 def my_dag(schedule=(a | b)):
     ...
 ```
+
+### Sharing data between task with XComs  
+
+
+### Xcom backend
