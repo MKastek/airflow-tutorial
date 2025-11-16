@@ -276,6 +276,184 @@ def my_dag(schedule=(a | b)):
 ```
 
 ### Sharing data between task with XComs  
+`XCom` (short for `Cross-Communication`) is Airflow’s built-in mechanism for sharing data between tasks within a DAG run.     
+Each task can **push** or **pull** small pieces of data to/from the Airflow **metadata database**.  
+XComs are persisted in Airflow’s metadata database (xcom table).  
+Each entry includes:
+- DAG ID, task ID, execution date  
+- `key`  
+- `value` (serialized — by default `JSON` or `pickled`)  
+
+### XCom Backend
 
 
-### Xcom backend
+### Callbacks: `on_success_callback` vs `on_failure_callback`  
+Callback works both on dag and task  
+```python
+from airflow import dataset
+from airflow.decorators import dag
+
+def handle_failed_dag_run(context):
+    print(f"Dag run failed with {context["task_instance"].task_id}")
+    
+
+@dag(
+    on_failure_callback = handle_failed_dag_run
+)
+def my_dag():
+  def task_b():
+      print("consumer")
+    
+```
+### Airflow CLI testing  
+
+### How to test dag locally  
+
+### Task group   
+In Apache Airflow, a TaskGroup is a UI-only organizational feature that lets you visually group related tasks together in the Airflow graph view.  
+It does not change scheduling, execution order, or task behavior—it simply makes large DAGs cleaner and easier to navigate.
+
+
+```python
+from airflow import DAG
+from airflow.decorators import task
+from airflow.utils.task_group import TaskGroup
+from datetime import datetime
+
+with DAG(
+    dag_id="taskgroup_example",
+    start_date=datetime(2023, 1, 1),
+    schedule_interval="@daily",
+) as dag:
+
+    @task
+    def start():
+        pass
+
+    @task
+    def end():
+        pass
+
+    with TaskGroup("processing_steps") as processing:
+        @task
+        def extract():
+            pass
+
+        @task
+        def transform():
+            pass
+
+        @task
+        def load():
+            pass
+
+        extract() >> transform() >> load()
+
+    start() >> processing >> end()
+```
+### Task with branching    
+Task branching in Apache Airflow allows you to choose which downstream tasks run based on a condition.  
+Branching is similar to an if/else statement for your DAG.  
+```python
+from airflow.decorators import dag, task
+from airflow.operators.empty import EmptyOperator
+from datetime import datetime
+
+@dag(start_date=datetime(2023,1,1), schedule="@daily")
+def taskflow_branching():
+
+    @task.branch
+    def pick_branch():
+        return "right_path"
+
+    left_path = EmptyOperator(task_id="left_path")
+    right_path = EmptyOperator(task_id="right_path")
+
+    end = EmptyOperator(task_id="end", trigger_rule="none_failed_or_skipped")
+
+    pick_branch() >> [left_path, right_path] >> end
+
+dag = taskflow_branching()
+```
+
+### Trigger rules 
+In Apache Airflow, Trigger Rules define when a task should run based on the state of its upstream tasks.  
+By default, Airflow uses all_success, meaning a task runs only if every parent task succeeded.  
+But trigger rules let you change that behavior—super useful for branching, error handling, retries, and cleanup tasks.    
+
+| Trigger Rule   | Fires When…                         |
+|----------------|-------------------------------------|
+| all_success    | All upstream succeeded              |
+| all_failed     | All upstream failed                 |
+| one_success    | At least one succeeded              |
+| one_failed     | At least one failed                 |
+| all_done       | All upstream finished (any state)   |
+| none_failed    | No upstream failed                  |
+| none_skipped   | No upstream skipped                 |
+| always         | Always runs                         |
+
+```python
+from airflow.utils.trigger_rule import TriggerRule
+
+@task(trigger_rule=TriggerRule.ALL_FAILED)
+def on_failure():
+    print("Runs only if ALL upstream tasks fail")
+```
+
+### Templating tasks     
+The Airflow engine passed a few variables by default like start date.
+```python
+execute_query = SQLExecuteQueryOperator(
+    task_id="execute_query",
+    sql="SELECT * FROM my_table WHERE date = {{ ds }}",
+    return_last=False,
+)
+```
+```python
+@task(trigger_rule=TriggerRule.ALL_FAILED, templates_dict={'the_current_date': '{{ ds }}'})
+def on_failure():
+    print(f"Runs only if ALL upstream tasks fail on {templates_dict['the_current_date']} ")
+```
+
+### XCom Backend  
+An XCom backend in Airflow is a pluggable system that stores and retrieves task-to-task communication data (XComs) using a custom storage provider instead of the default metadata database.  
+For instance it could be S3 bucket from AWS.    
+In Airflow, the **storage threshold** setting defines the **maximum size of an XCom value that Airflow will store in the metadata database before switching to the XCom backend’s external storage (such as S3, GCS, or another custom backend)**.  
+
+### Variables  
+Variable is key-word object to store values. By default variables are encrypted.
+```python
+@task(trigger_rule=TriggerRule.ALL_FAILED, templates_dict={'the_current_date': '{{ ds }}, my_api_key: {{ var.value.api }}'})
+def on_failure():
+    print(f"Runs only if ALL upstream tasks fail on {templates_dict['the_current_date']} ")
+    print(f"API {templates_dict['my_api_key']} ")
+```
+## Scaling Airflow 
+### Sequential Executor  
+In Apache Airflow, the SequentialExecutor is the simplest executor used to run tasks. It is primarily meant for development, testing, and debugging, not for production.      
+
+`SequentialExecutor` is used with SQLite because SQLite cannot handle concurrent writes, and running tasks sequentially prevents database locking issues.
+  
+`SequentialExecutor` is an Airflow executor that runs:
+- Only one task at a time  
+- In a single process  
+- In the same machine as the scheduler
+It is the default executor when you first install Airflow in standalone mode.    
+
+The Executor decides where and how the task should run (Kubernetes, your local machine).  
+
+### Local Executor  
+LocalExecutor is an Airflow executor that runs multiple tasks in parallel on the same machine using Python multiprocessing.  
+
+It’s the first production-capable executor—fast, simple, and does not require Celery or Kubernetes. PostgreSQL can handle many simultaneous connections and writes safely.  
+
+### Concurrency settings in Airflow
+- **parallelism**: The maximum number of tasks that can run concurrently on each scheduler within a single Airflow environment.  
+- **max_active_tasks_per_dag**: The maximum number of tasks that can be scheduled at the same time across all runs of a DAG. At the DAG level: `max_active_tasks`.
+- **max_active_runs_per_dag**: Determines the maximum number of active DAG runs (per DAG) that the Airflow scheduler can create at a time. At the DAG level: `max_acitve_runs`.
+
+### Celery Executor  
+In Apache Airflow, the Celery Executor is a distributed task execution backend that uses Celery, a popular asynchronous task queue, to run Airflow tasks across multiple worker machines.  
+he CeleryExecutor allows Airflow to scale out by distributing task execution to multiple workers.  
+
+Instead of running all tasks on the same machine (like `SequentialExecutor` or `LocalExecutor`), tasks are pushed into a message queue, and multiple Celery workers pull tasks and execute them independently.
