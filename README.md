@@ -169,8 +169,69 @@ class MyApiHook(BaseHook):
 ```
 ### Migrating to Airflow task flow 
 
-### XCOM
+### XCOM  
+XCOM is identified by key.  
+![img.png](img.png)  
 
+```python
+from airflow.sdk import dag,task,Context  
+
+@dag
+def xcom_dag():
+    @task
+    def task_a(**context: Context):
+        val = 42
+        context['ti'].xcom_push(key='my_key', value=val)
+
+    @task
+    def task_b(**context: Context):
+        val = context['ti'].xcom_pull(task_ids='task_a',key='my_key')
+        print(val)
+
+    task_a() >> task_b()
+    
+xcom_dag()
+```
+Equivalent methods of pushing and pulling xcom in taskflow approach.
+```python
+from airflow.sdk import dag,task,Context  
+
+@dag
+def xcom_dag():
+    @task
+    def task_a():
+        val = 42
+        return val #.xcom_push(key='return_value', value=val)
+
+    @task
+    def task_b(val: int):
+        print(val)
+
+    val = task_a()
+    task_b(val)
+    
+xcom_dag()
+```
+Equivalent method without parsing the context.
+```python
+from airflow.sdk import dag,task,Context  
+
+@dag
+def xcom_dag():
+    @task
+    def task_a(ti):
+        val = 42
+        ti.xcom_push(key='my_key', value=val)
+
+    @task
+    def task_b(ti):
+        val = ti.xcom_pull(task_ids='task_a',key='my_key')
+        print(val)
+
+    task_a() >> task_b()
+    
+xcom_dag()
+```
 ### Airflow providers
 
 ### Notifier  
@@ -400,7 +461,8 @@ def on_failure():
     print("Runs only if ALL upstream tasks fail")
 ```
 
-### Templating tasks     
+### Templating tasks       
+Templating allows you to pass dynamic information into task instances at runtime.  
 The Airflow engine passed a few variables by default like start date.
 ```python
 execute_query = SQLExecuteQueryOperator(
@@ -457,3 +519,92 @@ In Apache Airflow, the Celery Executor is a distributed task execution backend t
 he CeleryExecutor allows Airflow to scale out by distributing task execution to multiple workers.  
 
 Instead of running all tasks on the same machine (like `SequentialExecutor` or `LocalExecutor`), tasks are pushed into a message queue, and multiple Celery workers pull tasks and execute them independently.
+
+### Airflow on Kubernetes  
+- The Kubernetes executor runs each task in an individual Kubernetes Pod.  
+- The Kubernetes executor sends a message to the KubeAPI that creates a POD and runs the task in it.  
+- When a task completes, its Pod is terminated and the resources are returned to your cluster.  
+- Task are isolated from each other.  
+- Task isolation allow granular resource allocation and easier dependency management.  
+
+
+### The @task.short_circuit decorator  
+- simple check if run / not run next task  
+```python
+@task.short_circuit  
+def should_continue():
+    if condition_met: 
+        return True
+    return False 
+```
+#### Use case:  
+- simple go/no-go decisions    
+- validation checkpoints    
+- external dependency checks  
+
+### DAG versioning   
+DAG versioning is available in Airflow 3.0.   
+
+### DAG Bundle  
+DAG Bundle is a collection of files containing DAG code and supporting files. DAG bundles are named after the backend they use to store the DAG code.  
+- they are versioned and unversioned DAG bundles  
+- the default DAG bundle is the LocalDagBundle and is not versioned  
+- GitDagBundles is versioned
+
+### Asset  
+An Asset is an object that is defined by a unique name. Optionally, a URI can be arrached to the asset, when it represents a concrete data entity, like a file in an object storage or a tble in db.   
+
+```python
+from airflow.sdk import Asset  
+
+my_asset = Asset(name="my_asset", uri="file://path/my_file", group="my_group")
+```
+When you define an asset using the @asset taskflow decorator, Airflow actually creates a DAG with the same id in the background.  
+```python
+@asset(schedule="@daily", uri="file://path/my_file", group="my_group")
+def my_asset():
+   ... 
+```  
+
+Outlet are a task parameter that contains the list of Assets a specific tasks produces updates to, as soon as it completes successfully.  
+```python
+from airflow.sdk import Asset, task 
+
+@task(outlets=[Asset("my_asset")])
+def my_task():
+    ...
+```
+
+Inlets are a task parameter that contains the list of Assets a specific task has access to, typically to access extra information from related dataset events. Inlets for a task do not affect the schedule of the DAG.
+
+```python
+@task(inlets=[my_asset])
+def get_extra_inlet(inlet_events):
+   ... 
+```
+
+#### Asset schedules  
+- schedule=[Asset("a"),Asset("b")]
+- schedule=(Asset("a")|Asset("b")), schedule=(Asset("a") & Asset("b"))
+- schedule=AssetOrTimeSchedule()  
+
+### Airflow environments   
+```bash
+airflow version
+```
+
+```bash
+airflow info 
+```
+
+```bash
+airflow config list
+```
+
+```bash
+airflow cheat-sheet
+```
+
+```bash  
+airflow variables export variables.json
+```
